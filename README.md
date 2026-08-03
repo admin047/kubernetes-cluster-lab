@@ -147,8 +147,14 @@ vim /etc/hosts
 192.168.76.9 k8s-node1
 192.168.76.19 k8s-node2
 ```
+## 防火墙配置
 
----
+实验环境关闭 ufw：
+
+systemctl disable --now ufw
+
+生产环境根据角色开放 Kubernetes 必需端口。
+
 
 # 四、安装 containerd
 
