@@ -391,5 +391,9 @@ kubectl get svc
 ```
 
 ---
+# 远程关闭node1
+ssh root@192.168.xx.xx "systemctl poweroff"
+# 远程重启
+ssh root@192.168.xx.xx "reboot"
 
 
