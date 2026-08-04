@@ -1,0 +1,268 @@
+
+## 1. Helm 安装 ingress-nginx
+
+添加 Helm 仓库：
+
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+
+helm repo update
+```
+
+创建 namespace：
+
+```bash
+kubectl create namespace ingress-nginx
+```
+
+安装：
+
+```bash
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+--namespace ingress-nginx \
+--version 4.11.3
+```
+
+验证：
+
+```bash
+kubectl get pods -n ingress-nginx
+```
+
+结果：
+
+```text
+NAME                                       READY   STATUS
+ingress-nginx-controller-xxxxx             1/1     Running
+```
+
+查看 Helm：
+
+```bash
+helm list -n ingress-nginx
+```
+
+结果：
+
+```text
+NAME            STATUS
+ingress-nginx   deployed
+```
+
+---
+
+# 2. 创建测试应用
+
+## Deployment
+
+创建 nginx Deployment：
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: nginx-demo
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: nginx-demo
+
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+```
+
+部署：
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+检查：
+
+```bash
+kubectl get pods -o wide
+```
+
+---
+
+# 3. 创建 Service
+
+service.yaml:
+
+```yaml
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: nginx-demo-service
+
+spec:
+  selector:
+    app: nginx-demo
+
+  ports:
+  - port: 80
+    targetPort: 80
+```
+
+部署：
+
+```bash
+kubectl apply -f service.yaml
+```
+
+检查：
+
+```bash
+kubectl get svc
+```
+
+查看 Endpoint：
+
+```bash
+kubectl get endpoints nginx-demo-service
+```
+
+结果：
+
+```text
+nginx-demo-service
+
+10.244.x.x:80
+10.244.x.x:80
+```
+
+说明 Service 已正确关联 Pod。
+
+---
+
+# 4. 创建 Ingress 规则
+
+ingress.yaml:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+
+metadata:
+  name: nginx-demo-ingress
+
+spec:
+
+  ingressClassName: nginx
+
+  rules:
+
+  - host: nginx.test.com
+
+    http:
+
+      paths:
+
+      - path: /
+
+        pathType: Prefix
+
+        backend:
+
+          service:
+
+            name: nginx-demo-service
+
+            port:
+
+              number: 80
+```
+
+应用：
+
+```bash
+kubectl apply -f ingress.yaml
+```
+
+查看：
+
+```bash
+kubectl get ingress
+```
+
+---
+
+# 5. NodePort访问测试
+
+由于当前环境为 VMware NAT，没有云 LoadBalancer，因此使用 NodePort。
+
+查看：
+
+```bash
+kubectl get svc -n ingress-nginx
+```
+
+示例：
+
+```text
+80:30936/TCP
+443:30509/TCP
+```
+
+测试：
+
+```bash
+curl -H "Host: nginx.test.com" \
+http://192.168.76.19:30936
+```
+
+---
+
+# 7. 遇到问题记录
+
+## 问题1：K8s Ingress 业务访问排障主线
+现象：通过 curl -H Host:nginx.test.com 节点IP:30936 返回 504 Gateway Time-out
+
+根因：宿主机firewalld防火墙拦截了集群内部 Pod 跨节点通信，Ingress 所在节点无法连通其他节点上的业务 Nginx Pod；
+解决：关闭集群所有节点防火墙、清空 iptables 规则或放行对应端口。
+
+## 问题2：Ingress创建失败
+
+错误：
+
+```
+failed calling webhook
+validate.nginx.ingress.kubernetes.io
+EOF
+```
+
+原因：
+
+ingress-nginx admission webhook未完整初始化。
+
+处理：
+
+卸载：
+
+```bash
+helm uninstall ingress-nginx -n ingress-nginx
+```
+
+重新安装：
+
+```bash
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+--namespace ingress-nginx \
+--version 4.11.3
+```
+
+
