@@ -6,7 +6,7 @@ Kubernetes 三节点集群搭建实验（基于 Ubuntu + containerd + kubeadm + 
 ---
 
 ## 目录
-- 一、实验概览
+- 一、概览
 - 二、节点信息与版本
 - 三、先决条件
 - 四、系统初始化（所有节点）
@@ -22,7 +22,7 @@ Kubernetes 三节点集群搭建实验（基于 Ubuntu + containerd + kubeadm + 
 
 ---
 
-# 一、实验概览
+# 一、概览
 
 集群目标：
 - 1 x Control Plane（k8s-master）
