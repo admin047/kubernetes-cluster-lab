@@ -1,0 +1,376 @@
+# Harbor 私有镜像仓库部署实践
+
+## 1. 项目介绍
+
+Harbor 是一个企业级 Docker 私有镜像仓库，用于管理、存储和分发容器镜像。
+
+本实验在 Kubernetes 集群环境基础上部署 Harbor，实现：
+
+* Docker 镜像上传至 Harbor
+* 私有镜像仓库管理
+* Kubernetes 拉取 Harbor 镜像
+* 为后续 Jenkins CI/CD 流程提供镜像存储服务
+
+整体架构：
+
+```
+                 Docker Client
+                      |
+                      |
+                      v
+
+              +---------------+
+              |    Harbor     |
+              | 192.168.76.10 |
+              +---------------+
+                      |
+                      |
+              Docker Registry
+                      |
+                      |
+                      v
+
+              Kubernetes Cluster
+
+        +-------------+-------------+
+        |             |             |
+     master        node1         node2
+
+```
+
+---
+
+# 2. 环境信息
+
+## Harbor服务器
+
+| 参数             | 配置            |
+| -------------- | ------------- |
+| 操作系统           | Ubuntu 24.04  |
+| IP地址           | 192.168.76.10 |
+| Docker版本       | 29.7.1        |
+| Docker Compose | v5.4.0        |
+
+## Kubernetes环境
+
+| 节点         | IP            |
+| ---------- | ------------- |
+| k8s-master | 192.168.76.4  |
+| k8s-node1  | 192.168.76.9  |
+| k8s-node2  | 192.168.76.19 |
+
+Kubernetes版本：
+
+```
+v1.30.14
+```
+
+容器运行时：
+
+```
+containerd 2.2.1
+```
+
+---
+
+# 3. Docker环境准备
+
+## 安装Docker
+
+确认：
+
+```bash
+docker --version
+```
+
+输出：
+
+```
+Docker version 29.7.1
+```
+
+确认 Docker Compose：
+
+```bash
+docker compose version
+```
+
+输出：
+
+```
+Docker Compose version v5.4.0
+```
+
+---
+
+# 4. 下载Harbor
+
+进入安装目录：
+
+```bash
+cd /opt
+```
+
+下载Harbor离线安装包：
+
+```bash
+wget https://github.com/goharbor/harbor/releases/download/v2.x.x/harbor-offline-installer.tar.gz
+```
+
+解压：
+
+```bash
+tar -zxvf harbor-offline-installer.tar.gz
+```
+
+进入目录：
+
+```bash
+cd harbor
+```
+
+---
+
+# 5. Harbor配置
+
+复制配置文件：
+
+```bash
+cp harbor.yml.tmpl harbor.yml
+```
+
+修改：
+
+```yaml
+hostname: 192.168.76.10
+```
+
+实验环境使用HTTP访问：
+
+```yaml
+# https:
+#   port: 443
+```
+
+设置管理员密码：
+
+```yaml
+harbor_admin_password: Harbor12345
+```
+
+---
+
+# 6. 安装Harbor
+
+执行：
+
+```bash
+./install.sh
+```
+
+安装成功后查看：
+
+```bash
+docker ps
+```
+
+正常包含：
+
+```
+harbor-core
+harbor-db
+harbor-registry
+harbor-nginx
+harbor-portal
+```
+
+---
+
+# 7. Docker配置HTTP私有仓库
+
+由于实验环境使用HTTP，没有配置SSL。
+
+Docker默认使用HTTPS访问Registry，因此需要添加信任。
+
+编辑：
+
+```bash
+vim /etc/docker/daemon.json
+```
+
+添加：
+
+```json
+{
+ "insecure-registries":[
+    "192.168.76.10"
+ ]
+}
+```
+
+重启Docker：
+
+```bash
+systemctl restart docker
+```
+
+验证：
+
+```bash
+docker info | grep -A5 "Insecure Registries"
+```
+
+输出：
+
+```
+Insecure Registries:
+  192.168.76.10
+```
+
+---
+
+# 8. Harbor登录
+
+登录：
+
+```bash
+docker login 192.168.76.10
+```
+
+输入：
+
+```
+Username:
+admin
+
+Password:
+Harbor密码
+```
+
+成功：
+
+```
+Login Succeeded
+```
+
+---
+
+# 9. 创建Harbor项目
+
+登录Web页面：
+
+```
+http://192.168.76.10
+```
+
+创建项目：
+
+```
+k8s-demo
+```
+
+用于存放Kubernetes测试镜像。
+
+---
+
+# 10. 上传测试镜像
+
+拉取nginx：
+
+```bash
+docker pull nginx
+```
+
+重新打标签：
+
+```bash
+docker tag nginx \
+192.168.76.10/k8s-demo/nginx:v1
+```
+
+上传：
+
+```bash
+docker push \
+192.168.76.10/k8s-demo/nginx:v1
+```
+
+成功：
+
+```
+v1: digest: sha256:xxxx
+```
+
+Harbor页面查看：
+
+```
+Projects
+ |
+ k8s-demo
+ |
+ nginx
+```
+
+---
+
+# 11. 常见问题记录
+
+## 问题1：docker login HTTPS错误
+
+错误：
+
+```
+dial tcp 192.168.76.10:443:
+connect: connection refused
+```
+
+原因：
+
+Docker默认使用HTTPS，而Harbor使用HTTP。
+
+解决：
+
+配置：
+
+```
+/etc/docker/daemon.json
+```
+
+加入：
+
+```json
+{
+"insecure-registries":[
+"192.168.76.10"
+]
+}
+```
+
+重启Docker。
+
+---
+
+## 问题2：docker-compose版本错误
+
+错误：
+
+```
+ModuleNotFoundError:
+No module named distutils
+```
+
+原因：
+
+Ubuntu 24.04删除distutils，
+旧版docker-compose 1.x不兼容。
+
+解决：
+
+安装Docker Compose V2：
+
+```bash
+docker compose version
+```
+
+---
+
