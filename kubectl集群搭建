@@ -1,0 +1,398 @@
+# kubernetes-cluster-lab
+# Kubernetes 三节点集群搭建实验
+
+## 项目介绍
+
+本项目基于 Ubuntu Linux 搭建 Kubernetes 三节点集群，用于学习 Kubernetes 集群架构、容器编排、服务发布以及云原生运维技术。
+
+实验环境采用：
+
+* Kubernetes v1.30.14
+* containerd 容器运行时
+* kubeadm 集群部署方式
+* Calico 网络插件
+
+最终实现：
+
+* 1 台 Master 节点
+* 2 台 Worker 节点
+* Pod 调度运行
+* Service 服务暴露
+* Kubernetes 基础应用部署
+
+---
+
+# 一、集群架构
+
+```
+                 kubectl
+
+                    |
+                    |
+
+              k8s-master
+
+        Control Plane 节点
+
+ ┌─────────────────────────┐
+ │ kube-apiserver          │
+ │ etcd                    │
+ │ scheduler               │
+ │ controller-manager      │
+ │ kubelet                 │
+ └─────────────────────────┘
+
+
+              |
+       ----------------
+       |              |
+
+   k8s-node1      k8s-node2
+
+    Worker          Worker
+
+ ┌─────────┐    ┌─────────┐
+ │kubelet  │    │kubelet  │
+ │containerd│   │containerd│
+ │kube-proxy│   │kube-proxy│
+ └─────────┘    └─────────┘
+```
+
+---
+
+# 二、实验环境
+
+## 节点信息
+
+| 主机         | IP           | 角色            |
+| ---------- | ------------ | ------------- |
+| k8s-master | 192.168.76.4 | Control Plane |
+| k8s-node1  | 192.168.76.9 | Worker        |
+| k8s-node2  | 192.168.76.19 | Worker        |
+
+操作系统：
+
+```
+Ubuntu 24.04 LTS
+```
+
+Kubernetes版本：
+
+```
+v1.30.14
+```
+
+容器运行时：
+
+```
+containerd
+```
+
+网络插件：
+
+```
+Calico
+```
+
+---
+
+# 三、系统初始化
+
+所有节点执行。
+
+## 关闭 Swap
+
+```bash
+swapoff -a
+```
+
+永久关闭：
+
+```bash
+sed -i '/ swap / s/^/#/' /etc/fstab
+```
+
+## 配置主机名
+
+Master:
+
+```bash
+hostnamectl set-hostname k8s-master
+```
+
+Node1:
+
+```bash
+hostnamectl set-hostname k8s-node1
+```
+
+Node2:
+
+```bash
+hostnamectl set-hostname k8s-node2
+```
+
+## 配置 hosts
+
+编辑：
+
+```bash
+vim /etc/hosts
+```
+
+添加：
+
+```
+192.168.76.4 k8s-master
+192.168.76.9 k8s-node1
+192.168.76.19 k8s-node2
+```
+## 防火墙配置
+
+实验环境关闭 ufw：
+
+systemctl disable --now ufw
+
+生产环境根据角色开放 Kubernetes 必需端口。
+
+
+# 四、安装 containerd
+
+所有节点安装：
+
+```bash
+apt install containerd -y
+```
+
+生成配置：
+
+```bash
+mkdir -p /etc/containerd
+
+containerd config default \
+> /etc/containerd/config.toml
+```
+
+修改：
+
+```bash
+vim /etc/containerd/config.toml
+```
+
+设置：
+
+```toml
+SystemdCgroup = true
+```
+
+启动：
+
+```bash
+systemctl restart containerd
+
+systemctl enable containerd
+```
+
+检查：
+
+```bash
+systemctl status containerd
+```
+
+---
+
+# 五、安装 Kubernetes 组件
+
+所有节点安装：
+
+```bash
+apt install kubelet kubeadm kubectl -y
+```
+
+锁定版本：
+
+```bash
+apt-mark hold kubelet kubeadm kubectl
+```
+
+组件：
+
+| 组件      | 作用      |
+| ------- | ------- |
+| kubeadm | 集群初始化工具 |
+| kubelet | 节点管理组件  |
+| kubectl | 客户端管理工具 |
+
+---
+
+# 六、初始化 Master 节点
+
+Master执行：
+
+```bash
+kubeadm init \
+--apiserver-advertise-address=192.168.76.4 \
+--pod-network-cidr=192.168.0.0/16
+```
+
+配置 kubectl：
+
+```bash
+mkdir -p $HOME/.kube
+
+
+cp -i /etc/kubernetes/admin.conf \
+$HOME/.kube/config
+```
+
+验证：
+
+```bash
+kubectl get nodes
+```
+
+---
+
+# 七、Worker节点加入集群
+
+Worker执行：
+
+```bash
+kubeadm join 192.168.76.4:6443 \
+--token xxxx \
+--discovery-token-ca-cert-hash sha256:xxxx
+```
+
+Master查看：
+
+```bash
+kubectl get nodes
+```
+
+最终状态：
+
+```
+NAME          STATUS
+
+k8s-master    Ready
+
+k8s-node1     Ready
+
+k8s-node2     Ready
+```
+
+---
+
+# 八、安装 Calico 网络插件
+
+Master执行：
+
+```bash
+kubectl apply \
+-f https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/calico.yaml
+```
+
+查看：
+
+```bash
+kubectl get pods -n kube-system
+```
+
+核心组件：
+
+```
+calico-node
+coredns
+kube-proxy
+```
+
+状态：
+
+```
+Running
+```
+
+---
+
+# 九、部署测试应用
+
+## 创建 nginx
+
+```bash
+kubectl create deployment nginx \
+--image=nginx
+```
+
+查看：
+
+```bash
+kubectl get pods -o wide
+```
+
+---
+
+## 扩容应用
+
+创建3副本：
+
+```bash
+kubectl scale deployment nginx \
+--replicas=3
+```
+
+查看：
+
+```bash
+kubectl get pods
+```
+
+---
+
+## 创建 Service
+
+```bash
+kubectl expose deployment nginx \
+--port=80 \
+--type=NodePort
+```
+
+查看：
+
+```bash
+kubectl get svc
+```
+
+访问：
+
+```
+http://NodeIP:NodePort
+```
+
+---
+
+# 十、验证集群
+
+查看节点：
+
+```bash
+kubectl get nodes
+```
+
+查看所有Pod：
+
+```bash
+kubectl get pods -A
+```
+
+查看服务：
+
+```bash
+kubectl get svc
+```
+
+---
+# 远程关闭node1
+ssh root@192.168.xx.xx "systemctl poweroff"
+# 远程重启
+ssh root@192.168.xx.xx "reboot"
+
