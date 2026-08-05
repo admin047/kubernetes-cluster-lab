@@ -1,321 +1,409 @@
-# kubernetes-cluster-lab
-Kubernetes 三节点集群搭建实验（基于 Ubuntu + containerd + kubeadm + Calico）
+# Kubernetes Cluster Lab —— 三节点集群 + Harbor 私有镜像仓库 + Ingress-Nginx
 
-本项目用于在实验环境中搭建一个简单的三节点 Kubernetes 集群（1 Master + 2 Worker），便于学习集群组件、Pod 调度、Service 暴露与基础运维操作。README 已结合仓库中原始内容与常见实践进行了整理与补充。
+本仓库记录在 Ubuntu 环境下搭建 Kubernetes 三节点集群（1 Master + 2 Worker），在集群外部部署 Harbor 私有镜像仓库并将镜像推送到 Harbor，再在集群中部署应用并通过 ingress-nginx 暴露服务的完整实验步骤与常见问题排查。
 
 ---
 
 ## 目录
-- 一、概览
-- 二、节点信息与版本
-- 三、先决条件
-- 四、系统初始化（所有节点）
-- 五、安装 containerd
-- 六、安装 Kubernetes 组件（kubeadm / kubelet / kubectl）
-- 七、初始化 Master 节点
-- 八、Worker 加入集群
-- 九、安装 Calico 网络插件
-- 十、部署测试应用与验证
-- 十一、常见问题排查
-- 十二、远程管理示例
-- 许可证
+- 1. 项目简介与架构
+- 2. 环境信息
+- 3. 前置准备
+- 4. 在单独主机部署 Harbor（私有镜像仓库）
+- 5. Kubernetes 三节点集群搭建（kubeadm + containerd）
+- 6. 网络插件：Calico
+- 7. 在集群中使用 Harbor 镜像（含认证）
+- 8. 安装 ingress-nginx（Helm）
+- 9. 测试应用：Deployment / Service / Ingress
+- 10. 常见问题与排障
+- 11. 参考文档
 
 ---
 
-# 一、概览
+## 1. 项目简介与架构
 
-集群目标：
-- 1 x Control Plane（k8s-master）
-- 2 x Worker（k8s-node1、k8s-node2）
-- 使用 containerd 作为容器运行时
-- 使用 kubeadm 部署
-- 使用 Calico 作为 CNI（示例使用 v3.29.0）
+目标：
+- 在实验环境中部署 Harbor 作为私有镜像仓库；
+- 使用 kubeadm 在 1 台 Master 和 2 台 Worker 上部署 Kubernetes 集群；
+- 使用 Calico 提供网络互通；
+- 用 Helm 安装 ingress-nginx，暴露集群内服务；
+- 将镜像推到 Harbor，并在 Kubernetes 中拉取运行。
 
-拓扑图（简化）：
+架构示意：
 
-                 kubectl
-                    |
-                 k8s-master (Control Plane)
-                    |
-             -----------------
-             |               |
-          k8s-node1        k8s-node2
-           (Worker)         (Worker)
-
----
-
-# 二、节点信息与版本
-
-| 主机         | IP            | 角色          |
-| ------------ | ------------- | ------------- |
-| k8s-master   | 192.168.76.4  | Control Plane |
-| k8s-node1    | 192.168.76.9  | Worker        |
-| k8s-node2    | 192.168.76.19 | Worker        |
-
-操作系统：
-```
-Ubuntu 24.04 LTS
-```
-
-关键版本（实验采用）：
-```
-Kubernetes: v1.30.14
-containerd: 系统包（Ubuntu 提供）
-Calico: v3.29.0
-```
+                 Docker Client
+                      |
+                      v
+               +---------------+
+               |    Harbor     |
+               | 192.168.76.10 |
+               +---------------+
+                      |
+                Docker Registry
+                      |
+                      v
+              Kubernetes Cluster
+        +-------------+-------------+
+        |             |             |
+     k8s-master    k8s-node1     k8s-node2
 
 ---
 
-# 三、先决条件
+## 2. 环境信息（实验示例）
 
-在所有节点上以 root 或具备 sudo 权限的用户执行以下操作，并确保节点之间网络互通（能互相 ping、能访问 6443 端口）：
+Harbor 服务器
+- OS: Ubuntu 24.04
+- IP: 192.168.76.10
+- Docker: 29.7.1
+- Docker Compose: v5.4.0
 
-- 关闭防火墙（实验环境）或按生产环境调整规则（开放 Kubernetes 所需端口）。
-- 关闭 Swap（Kubernetes 要求）。
-- 配置主机名与 /etc/hosts，使节点能通过主机名互相访问。
-- 时间同步（推荐安装并启用 chrony 或 systemd-timesyncd）。
+Kubernetes 节点
+- k8s-master: 192.168.76.4 (Control Plane)
+- k8s-node1: 192.168.76.9 (Worker)
+- k8s-node2: 192.168.76.19 (Worker)
+
+Kubernetes 版本：
+```
+v1.30.14
+```
+容器运行时：
+```
+containerd 2.2.1
+```
+网络插件：Calico
 
 ---
 
-# 四、系统初始化（所有节点）
-
-1. 更新与安装基础工具：
+## 3. 前置准备（各节点通用）
+- 关闭 swap：
 ```bash
-sudo apt update
-sudo apt install -y ca-certificates curl gnupg lsb-release vim
+swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
 ```
-
-2. 关闭 Swap（临时）：
+- 设置主机名（按节点分别设置）：
 ```bash
-sudo swapoff -a
+hostnamectl set-hostname k8s-master
+hostnamectl set-hostname k8s-node1
+hostnamectl set-hostname k8s-node2
 ```
-永久禁用 (编辑 /etc/fstab，将 swap 行注释掉)：
-```bash
-sudo sed -i '/ swap / s/^/#/' /etc/fstab
+- /etc/hosts 添加内网解析：
 ```
-
-3. 设置内核参数（确保网络转发与 iptables 能处理 bridge 流量）：
-```bash
-cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-iptables = 1
-net.ipv4.ip_forward = 1
-EOF
-
-sudo sysctl --system
+192.168.76.4  k8s-master
+192.168.76.9  k8s-node1
+192.168.76.19 k8s-node2
 ```
-
-4. 配置主机名与 hosts（示例）：
+- 关闭或按需配置防火墙（实验环境可关闭 ufw）：
 ```bash
-sudo hostnamectl set-hostname k8s-master   # 在 master 上
-sudo hostnamectl set-hostname k8s-node1    # 在 node1 上
-sudo hostnamectl set-hostname k8s-node2    # 在 node2 上
-
-# 编辑 /etc/hosts（在每台机器都加）
-sudo tee -a /etc/hosts <<EOF
-192.168.76.4   k8s-master
-192.168.76.9   k8s-node1
-192.168.76.19  k8s-node2
-EOF
-```
-
-注意：生产环境请按安全策略开启并配置防火墙规则，而不是全部禁用。
-
----
-
-# 五、安装 containerd（所有节点）
-
-1. 安装 containerd：
-```bash
-sudo apt update
-sudo apt install -y containerd
-```
-
-2. 生成默认配置并启用 systemd cgroup：
-```bash
-sudo mkdir -p /etc/containerd
-sudo containerd config default | sudo tee /etc/containerd/config.toml
-# 编辑 /etc/containerd/config.toml，将 SystemdCgroup 设置为 true（一般在 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options] 下）
-# 或使用 sed 替换（谨慎使用，建议手动确认）
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-```
-
-3. 重启与启用：
-```bash
-sudo systemctl restart containerd
-sudo systemctl enable containerd
-sudo systemctl status containerd --no-pager
+systemctl disable --now ufw
 ```
 
 ---
 
-# 六、安装 Kubernetes 组件（kubeadm / kubelet / kubectl）
+## 4. 在单独主机部署 Harbor（私有镜像仓库）
 
-在所有节点上添加 Kubernetes apt 源并安装指定版本（示例为 v1.30.14）：
-
+1. 进入安装目录并下载离线安装包（示例）：
 ```bash
-# 准备
-sudo apt update
-sudo apt install -y ca-certificates curl
-
-# 添加官方 GPG key（现代方式）
-sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
-
-# 添加 apt 源
-echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | \
-  sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-# 更新并安装（带 -00 后缀锁定精确包）
-sudo apt update
-sudo apt install -y kubelet=1.30.14-00 kubeadm=1.30.14-00 kubectl=1.30.14-00
-
-# 防止自动升级替换版本
-sudo apt-mark hold kubelet kubeadm kubectl
+cd /opt
+wget https://github.com/goharbor/harbor/releases/download/v2.x.x/harbor-offline-installer.tar.gz
+tar -zxvf harbor-offline-installer.tar.gz
+cd harbor
 ```
 
-如果你不需要精确版本，也可以省略具体版本号，但实验中建议固定版本以保证可重复性。
+2. 复制并编辑配置：
+```bash
+cp harbor.yml.tmpl harbor.yml
+# 编辑 harbor.yml:
+# hostname: 192.168.76.10
+# 如果使用 HTTP（实验环境），取消 https 配置或注释证书相关配置
+# 设置管理员密码
+# harbor_admin_password: Harbor12345
+```
+
+3. 安装 Harbor：
+```bash
+./install.sh
+```
+安装后用 `docker ps` 查看相关容器：
+```
+harbor-core
+harbor-db
+harbor-registry
+harbor-nginx
+harbor-portal
+```
+
+4. Docker（在需要向 Harbor 推镜像的机器上）配置 HTTP 非安全仓库（实验环境）：
+编辑 /etc/docker/daemon.json：
+```json
+{
+  "insecure-registries": [
+    "192.168.76.10"
+  ]
+}
+```
+重启 Docker：
+```bash
+systemctl restart docker
+```
+验证：
+```bash
+docker info | grep -A5 "Insecure Registries"
+```
+
+注意（Kubernetes 节点使用 containerd 时）：若 Kubernetes 节点 Pull 镜像需访问 HTTP Harbor，应在每个 containerd 节点配置不安全仓库（示例）：
+
+编辑 /etc/containerd/config.toml（或使用 `containerd config default > /etc/containerd/config.toml` 生成后修改），添加（示例）：
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."192.168.76.10"]
+  endpoint = ["http://192.168.76.10:80"]
+```
+然后重启 containerd：
+```bash
+systemctl restart containerd
+```
+
+5. 登录 Harbor（在推镜像的主机上）：
+```bash
+docker login 192.168.76.10
+# Username: admin
+# Password: <harbor_admin_password>
+# 成功应显示: Login Succeeded
+```
+
+6. 在 Harbor 创建项目（例如 web 项目）：
+在 Web UI: http://192.168.76.10 → 创建项目 k8s-demo
+
+7. 推送测试镜像：
+```bash
+docker pull nginx
+docker tag nginx 192.168.76.10/k8s-demo/nginx:v1
+docker push 192.168.76.10/k8s-demo/nginx:v1
+```
 
 ---
 
-# 七、初始化 Master 节点
+## 5. Kubernetes 三节点集群搭建（kubeadm + containerd）
 
-在 k8s-master 上执行：
-
+1. 在所有节点安装 containerd：
 ```bash
-sudo kubeadm init \
+apt update
+apt install -y containerd
+mkdir -p /etc/containerd
+containerd config default > /etc/containerd/config.toml
+# 修改 config.toml，确保 SystemdCgroup = true（在相应位置设置）
+# 如需配置 Harbor 非安全 registry，也在此处添加 mirror 配置（参见上文）
+systemctl restart containerd
+systemctl enable containerd
+```
+
+2. 在所有节点安装 Kubernetes 组件（kubeadm、kubelet、kubectl）并锁版本：
+```bash
+apt install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+```
+
+3. 初始化 Master（在 k8s-master 上）：
+```bash
+kubeadm init \
   --apiserver-advertise-address=192.168.76.4 \
   --pod-network-cidr=192.168.0.0/16
 ```
-
-成功后，按照 kubeadm 输出做以下操作以配置 kubectl（以普通用户为例）：
+配置 kubectl（在 master 的用户下）：
 ```bash
 mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
+cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+chown $(id -u):$(id -g) $HOME/.kube/config
 ```
-
-检查节点和控制面状态：
-```bash
-kubectl get nodes
-kubectl get pods -n kube-system
-```
-
-记录或保存 kubeadm 输出中关于 Worker 加入集群的 `kubeadm join ...` 命令（包含 token 和 discovery-token-ca-cert-hash），也可使用下一节的命令动态生成。
-
----
-
-# 八、Worker 节点加入集群
-
-在任一 Worker（或同时在两台）上执行 kubeadm join（使用 init 输出的 join 命令）：
-```bash
-sudo kubeadm join 192.168.76.4:6443 \
-  --token <token-from-master> \
-  --discovery-token-ca-cert-hash sha256:<hash>
-```
-
-如果 token 已过期，在 master 上创建并打印 join 命令：
-```bash
-sudo kubeadm token create --print-join-command
-```
-
-回到 master 上验证：
+验证节点状态：
 ```bash
 kubectl get nodes
 ```
 
-预期状态：
+4. Worker 加入集群（在每个 Worker 上执行 kubeadm join 命令，使用 init 输出的 token 与 hash）：
+```bash
+kubeadm join 192.168.76.4:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
 ```
-NAME         STATUS   ROLES    AGE    VERSION
-k8s-master   Ready    control-plane ...
-k8s-node1    Ready    <none>   ...
-k8s-node2    Ready    <none>   ...
+Master查看加入结果：
+```bash
+kubectl get nodes
 ```
 
 ---
 
-# 九、安装 Calico 网络插件（Master）
-
-示例使用 Calico v3.29.0（跟 kubeadm init 使用的 pod-network-cidr 保持一致）：
-
+## 6. 安装 Calico（网络插件）
+在 Master 上：
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/calico.yaml
 ```
-
-检查 Calico Pod 状态：
+查看 kube-system Pod：
 ```bash
 kubectl get pods -n kube-system
-kubectl get ds -n kube-system
-```
-
-等待 calico-node、coredns 等 POD 进入 Running 状态。
-
----
-
-# 十、部署测试应用与验证
-
-1. 部署 nginx：
-```bash
-kubectl create deployment nginx --image=nginx
-kubectl get pods -o wide
-```
-
-2. 扩容到 3 个副本：
-```bash
-kubectl scale deployment nginx --replicas=3
-kubectl get pods -l app=nginx
-```
-
-3. 暴露为 NodePort 服务：
-```bash
-kubectl expose deployment nginx --port=80 --type=NodePort
-kubectl get svc
-# 访问格式: http://<NodeIP>:<NodePort>
-```
-
-常用诊断命令：
-```bash
-kubectl get nodes -o wide
-kubectl get pods -A
-kubectl describe pod <pod-name> -n <namespace>
-kubectl logs <pod-name> [-c <container>] -n <namespace>
+# 关键信息: calico-node, coredns, kube-proxy 等均 Running
 ```
 
 ---
 
-# 十一、常见问题排查
+## 7. 在集群中使用 Harbor 镜像（含认证）
 
-- kubelet 与 containerd 的 cgroup 驱动不匹配：
-  - containerd 配置中需启用 SystemdCgroup=true，kubelet 也应使用 systemd cgroup 驱动（默认取决于系统）。
-  - 查看 kubelet 日志： sudo journalctl -u kubelet -b
+- 如果 Harbor 项目为公开（不需要身份），可直接在 Deployment 中使用镜像地址：
+```yaml
+image: 192.168.76.10/k8s-demo/nginx:v1
+```
 
-- Pod 一直 Pending：
-  - 检查 CNI 是否就绪（kubectl get pods -n kube-system）
-  - 检查 Node taints 与 Pod 的调度约束
-
-- 无法 join：
-  - 检查 master 的 6443 端口是否可达（nc / telnet）
-  - 检查 token 是否过期（在 master 上重新生成 join 命令）
-
-- Calico Pod CrashLoop：
-  - 使用 kubectl describe pod 与 kubectl logs 查看具体错误
-  - 检查内核参数、iptables、内核模块（bridge-nf-call-iptables）
+- 若 Harbor 需要认证（常见），需要创建 imagePullSecret：
+```bash
+kubectl create secret docker-registry regcred \
+  --docker-server=192.168.76.10 \
+  --docker-username=admin \
+  --docker-password=Harbor12345 \
+  --docker-email=you@example.com
+```
+在 Pod/Deployment 中引用：
+```yaml
+spec:
+  imagePullSecrets:
+  - name: regcred
+```
 
 ---
 
-# 十二、远程管理示例
+## 8. 安装 ingress-nginx（使用 Helm）
 
-远程关机：
+1. 添加仓库并更新：
 ```bash
-ssh root@192.168.xx.xx "systemctl poweroff"
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+```
+2. 创建 namespace 并安装：
+```bash
+kubectl create namespace ingress-nginx
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --version 4.11.3
+```
+3. 验证：
+```bash
+kubectl get pods -n ingress-nginx
+helm list -n ingress-nginx
 ```
 
-远程重启：
+测试（在无外部 LB 的 VMware NAT 环境）可使用 ingress-nginx 的 NodePort 暴露端口，例如查看 Service 输出的 NodePort 并通过 Host 头访问：
 ```bash
-ssh root@192.168.xx.xx "reboot"
+kubectl get svc -n ingress-nginx
+# 假设 80:30936/TCP，则：
+curl -H "Host: nginx.test.com" http://192.168.76.19:30936
 ```
-
-（将上面的 IP 替换为目标节点地址）
 
 ---
 
-# 许可证
-MIT
+## 9. 测试应用：Deployment / Service / Ingress（示例）
+
+1. Deployment（nginx-demo）：
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-demo
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+    spec:
+      containers:
+      - name: nginx
+        image: 192.168.76.10/k8s-demo/nginx:v1
+        ports:
+        - containerPort: 80
+```
+部署：
+```bash
+kubectl apply -f deployment.yaml
+```
+
+2. Service（ClusterIP）：
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-demo-service
+spec:
+  selector:
+    app: nginx-demo
+  ports:
+  - port: 80
+    targetPort: 80
+```
+部署：
+```bash
+kubectl apply -f service.yaml
+kubectl get endpoints nginx-demo-service
+```
+
+3. Ingress（通过 ingress-nginx 暴露）：
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-demo-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: nginx.test.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-demo-service
+            port:
+              number: 80
+```
+部署并测试（结合上文的 NodePort 访问方式）：
+```bash
+kubectl apply -f ingress.yaml
+kubectl get ingress
+# 在客户端:
+curl -H "Host: nginx.test.com" http://<ingress-node-ip>:<ingress-node-port>
+```
+
+---
+
+## 10. 常见问题与排障
+
+问题：docker login 报 HTTPS 连接被拒绝（connection refused:443）
+- 原因：Docker 默认使用 HTTPS，而 Harbor 在实验中使用 HTTP。
+- 解决：在 Docker 客户端主机 /etc/docker/daemon.json 中加入 harbor 为 insecure registry（见第4节），并重启 Docker。
+
+问题：旧版 docker-compose 安装时报 No module named distutils
+- 原因：Ubuntu 24.04 删除了 distutils，旧版 docker-compose (1.x) 依赖 distutils。
+- 解决：使用 Docker Compose V2（`docker compose`）或安装相应的 python-distutils 包（非推荐，建议使用 Compose V2）。
+
+问题：Ingress 访问返回 504 Gateway Time-out
+- 原因：防火墙或 iptables 规则阻断了节点间 Pod 通信，Ingress 节点无法访问后端 Pod。
+- 解决：确认集群节点防火墙已关闭或放行必要端口，清空不必要的 iptables 规则；确认 Calico 或 CNI 配置正确。
+
+问题：ingress-nginx 创建失败，报 failed calling webhook validate.nginx.ingress.kubernetes.io EOF
+- 原因：ingress-nginx 的 admission webhook 未初始化完成或证书问题。
+- 解决：等待 webhook 启动；如反复失败，可 helm uninstall 后重装 ingress-nginx，并检查 webhook Pod 日志。
+
+问题：Kubernetes 节点拉取 Harbor HTTP 镜像失败（containerd）
+- 原因：containerd 未配置访问非安全 registry。
+- 解决：在各节点的 /etc/containerd/config.toml 中添加 registry mirror 配置并重启 containerd（详见第4节 containerd 配置）。
+
+---
+
+## 11. 参考文档
+- Harbor 官方仓库与文档（离线安装包与 harbor.yml 配置）
+- Kubernetes 官方文档（kubeadm、kubelet、kubectl）
+- Calico 官方安装清单
+- ingress-nginx Helm chart
+
+---
+
+如果你希望，我可以：
+- 把这个 README.md 直接提交到仓库（创建/更新文件），或
+- 把示例 YAML文件拆分放到 repo 的 `manifests/` 目录并创建一个包含部署命令的脚本（例如 `deploy.sh`）。
