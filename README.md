@@ -402,8 +402,3 @@ curl -H "Host: nginx.test.com" http://<ingress-node-ip>:<ingress-node-port>
 - Calico 官方安装清单
 - ingress-nginx Helm chart
 
----
-
-如果你希望，我可以：
-- 把这个 README.md 直接提交到仓库（创建/更新文件），或
-- 把示例 YAML文件拆分放到 repo 的 `manifests/` 目录并创建一个包含部署命令的脚本（例如 `deploy.sh`）。
