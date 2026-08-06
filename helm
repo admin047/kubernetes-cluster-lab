@@ -367,4 +367,57 @@ ctr -n k8s.io images pull \
 验证 containerd 是否可以访问 Harbor。
 
 
+ Kubernetes 私有镜像仓库接入
+# 私有镜像仓库接入
+
+## 一、镜像拉取鉴权（imagePullSecrets）
+
+为了使 Kubernetes 能够从 Harbor 私有镜像仓库拉取业务镜像，需要在集群中创建镜像拉取凭据（Secret）。
+
+Secret 类型：
+
+```text
+kubernetes.io/dockerconfigjson
+```
+
+主要用于保存 Harbor 仓库的账号密码，在 Pod 拉取私有镜像时自动完成身份认证。
+
+### 创建 Secret
+
+```bash
+kubectl create secret docker-registry harbor-secret \
+  --docker-server=192.168.76.10:80 \
+  --docker-username=admin \
+  --docker-password=<password>
+
+
+# 二、业务镜像发布流程
+
+完成了基于 Harbor 私有仓库的业务镜像发布与部署流程，整体过程如下：
+
+```text
+Docker Build
+      │
+      ▼
+Docker Tag
+      │
+      ▼
+Docker Push
+      │
+      ▼
+Harbor 私有仓库
+      │
+      ▼
+Kubernetes Deployment
+      │
+      ▼
+imagePullSecrets 鉴权
+      │
+      ▼
+containerd 拉取镜像
+      │
+      ▼
+Pod 成功运行
+```
+
 ---
