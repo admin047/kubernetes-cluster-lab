@@ -1,0 +1,241 @@
+# Jenkins 部署实践记录
+
+## 1. 创建 Namespace
+
+创建 DevOps 命名空间：
+
+```bash
+kubectl create namespace devops
+
+查看：
+
+kubectl get ns
+2. 添加 Jenkins Helm 仓库
+
+添加 Jenkins 官方 Helm 仓库：
+
+helm repo add jenkins https://charts.jenkins.io
+
+helm repo update
+
+查看 Jenkins Chart：
+
+helm search repo jenkins
+
+示例：
+
+NAME             CHART VERSION
+jenkins/jenkins  5.9.53
+3. 创建 Jenkins 配置文件
+
+创建：
+
+vim jenkins-values.yaml
+
+配置：
+
+controller:
+
+  admin:
+    username: admin
+    password: admin123
+
+  numExecutors: 2
+
+
+persistence:
+
+  enabled: true
+
+  size: 10Gi
+
+说明：
+
+配置管理员账号
+开启 Jenkins 数据持久化
+设置执行节点数量
+4. Helm 安装 Jenkins
+
+执行：
+
+helm install jenkins \
+jenkins/jenkins \
+-n devops \
+-f jenkins-values.yaml
+
+查看 Pod：
+
+kubectl get pods -n devops
+
+正常：
+
+jenkins-0   2/2 Running
+5. 查看 Jenkins 存储
+
+查看 PVC：
+
+kubectl get pvc -n devops
+
+结果：
+
+NAME       STATUS   CAPACITY
+jenkins    Bound    10Gi
+
+说明 Jenkins 数据已经持久化。
+
+6. 获取 Jenkins 登录密码
+
+查看 Secret：
+
+kubectl get secret jenkins -n devops
+
+查看详细信息：
+
+kubectl get secret jenkins \
+-n devops \
+-o yaml
+
+解码密码：
+
+echo YWRtaW4xMjM= | base64 -d
+
+登录：
+
+用户名：
+admin
+
+密码：
+admin123
+7. 修改 Jenkins Service 暴露方式
+
+默认安装：
+
+Service Type: ClusterIP
+
+只能集群内部访问。
+
+修改为 NodePort：
+
+kubectl patch svc jenkins \
+-n devops \
+-p '{"spec":{"type":"NodePort","ports":[{"port":8080,"targetPort":8080,"nodePort":30080}]}}'
+
+查看：
+
+kubectl get svc -n devops
+
+结果：
+
+jenkins   NodePort   8080:30080/TCP
+
+访问：
+
+http://节点IP:30080
+8. 创建 Harbor 登录凭证
+
+创建 Kubernetes Secret：
+
+kubectl create secret docker-registry harbor-secret \
+-n devops \
+--docker-server=192.168.76.10:80 \
+--docker-username=admin \
+--docker-password=密码
+
+查看：
+
+kubectl get secret -n devops
+
+结果：
+
+harbor-secret
+
+用于 Jenkins 后续推送镜像到 Harbor。
+
+9. Jenkins 部署问题记录
+问题1：PVC 容量修改失败
+
+错误：
+
+PersistentVolumeClaim "jenkins" is invalid
+
+field can not be less than previous value
+
+原因：
+
+Kubernetes 不允许缩小 PVC 容量。
+
+例如：
+
+已有：
+
+10Gi
+
+修改：
+
+5Gi
+
+会失败。
+
+解决：
+
+保持原容量：
+
+persistence:
+  size: 10Gi
+问题2：Jenkins Pod Pending
+
+现象：
+
+jenkins-0   Pending
+
+查看：
+
+kubectl describe pod jenkins-0 -n devops
+
+发现：
+
+node-role.kubernetes.io/control-plane:NoSchedule
+
+原因：
+
+Master 节点禁止调度普通 Pod。
+
+解决：
+
+实验环境取消污点：
+
+kubectl taint nodes k8s-master \
+node-role.kubernetes.io/control-plane:NoSchedule-
+问题3：自定义 Jenkins 镜像启动失败
+
+错误：
+
+Init:InvalidImageName
+
+查看：
+
+kubectl get pod jenkins-0 \
+-n devops \
+-o yaml | grep image
+
+发现：
+
+错误镜像：
+
+docker.io/192.168.76.10:80/xxx
+
+原因：
+
+Helm 自动拼接默认 Registry。
+
+处理：
+
+回滚 Jenkins：
+
+helm history jenkins -n devops
+
+选择正常版本：
+
+helm rollback jenkins 6 -n devops
+
+恢复官方 Jenkins 镜像。
