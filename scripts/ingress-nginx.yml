@@ -1,0 +1,33 @@
+---
+- name: Install Nginx Ingress Controller
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+    - name: Ensure ingress-nginx namespace
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: ingress-nginx
+
+    - name: Add ingress-nginx repo
+      command: helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
+
+    - name: Update helm repos
+      command: helm repo update
+
+    - name: Install ingress-nginx
+      command: helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx
+
+    - name: Wait for ingress pods
+      k8s_info:
+        kind: Pod
+        namespace: ingress-nginx
+      register: ing_pods
+
+    - name: Show ingress pods
+      debug:
+        msg: "{{ ing_pods.resources | map(attribute='metadata.name') | list }}"

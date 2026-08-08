@@ -1,0 +1,17 @@
+---
+- name: Create NFS StorageClass (example)
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+    - name: Create nfs-client storageclass
+      k8s:
+        state: present
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: nfs-client
+          provisioner: example.com/nfs
+          parameters:
+            archiveOnDelete: "false"

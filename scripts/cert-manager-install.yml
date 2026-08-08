@@ -1,0 +1,26 @@
+---
+- name: Install cert-manager
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+    - name: Create cert-manager namespace
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: cert-manager
+
+    - name: Apply cert-manager CRDs
+      command: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.crds.yaml
+
+    - name: Add jetstack helm repo
+      command: helm repo add jetstack https://charts.jetstack.io || true
+
+    - name: Update helm repos
+      command: helm repo update
+
+    - name: Install cert-manager
+      command: helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --set installCRDs=true

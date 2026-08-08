@@ -1,0 +1,42 @@
+---
+- name: Install Harbor (Helm)
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+    - name: Ensure namespace harbor exists
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: harbor
+
+    - name: Add harbor helm repo
+      command: helm repo add harbor https://helm.goharbor.io || true
+
+    - name: Update helm repos
+      command: helm repo update
+
+    - name: Create values file
+      copy:
+        dest: /tmp/harbor-values.yaml
+        content: |
+          expose:
+            type: nodePort
+          persistence:
+            enabled: false
+
+    - name: Install harbor via helm
+      command: helm upgrade --install harbor harbor/harbor -n harbor -f /tmp/harbor-values.yaml
+
+    - name: Wait for harbor deployment
+      k8s_info:
+        kind: Pod
+        namespace: harbor
+      register: harbor_pods
+
+    - name: Show pods
+      debug:
+        msg: "{{ harbor_pods.resources | map(attribute='metadata.name') | list }}"

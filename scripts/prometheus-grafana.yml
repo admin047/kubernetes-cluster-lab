@@ -1,0 +1,36 @@
+---
+- name: Install Prometheus + Grafana (kube-prometheus-stack)
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+    - name: Ensure monitoring namespace
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: monitoring
+
+    - name: Add prometheus-community helm repo
+      command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+
+    - name: Add prometheus stack repo
+      command: helm repo add prometheus https://prometheus-community.github.io/helm-charts || true
+
+    - name: Update helm repos
+      command: helm repo update
+
+    - name: Install kube-prometheus-stack
+      command: helm upgrade --install prometheus prometheus-community/kube-prometheus-stack -n monitoring
+
+    - name: Wait for monitoring pods
+      k8s_info:
+        kind: Pod
+        namespace: monitoring
+      register: mon_pods
+
+    - name: Show monitoring pods
+      debug:
+        msg: "{{ mon_pods.resources | map(attribute='metadata.name') | list }}"
