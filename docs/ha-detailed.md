@@ -242,27 +242,4 @@ redis-cli -h 192.168.76.4 DEBUG sleep 10
 - Postgres：停止主库并验证 replica 是否接收 WAL
 - Redis：停止 master，观察 sentinel 选举新 master
 
-验证命令在 docs/ha-checklist.md 中提供（快速命令）
 
----
-
-7. 新增脚本（已生成，放在 scripts/08-ha/）
-
-- scripts/08-ha/06-deploy-postgresql-ha.sh：用于在目标节点上部署 PostgreSQL 主/从（交互式/参数化，执行前会提示并需要确认，避免误删数据）。
-- scripts/08-ha/07-verify-data-consistency.sh：用于对比主/从表行数、检查 pg_stat_replication 与 LSN 差异，输出差异报告。
-
-（下文包含脚本说明与运行示例）
-
----
-
-8. 运行示例（演练顺序）
-
-1. 在测试环境准备 inventory（scripts/hosts）并确保 ansible 可以访问所有节点
-2. 部署 Keepalived（在 master 和 backup）并验证 VIP
-3. 部署 Nginx，指向 k8s master 上游
-4. 部署数据库服务（MySQL / Postgres / Redis）并配置复制
-5. 逐项验证并执行故障注入
-
----
-
-如果你同意，我已将相关脚本与配置模板生成到仓库（scripts/08-ha/ 与 configs/postgresql/），你可以按 docs/ha.md 与 docs/ha-checklist.md 的步骤演练。如需我进一步根据你某台 VM 的真实主机名/IP 自动生成 inventory 与一键演练脚本，我可以继续生成。
