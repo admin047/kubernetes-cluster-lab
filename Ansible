@@ -1,0 +1,475 @@
+
+- Ansible Inventory 主机管理
+- SSH 密钥认证管理
+- Linux 节点基础巡检
+- Kubernetes 节点状态检查
+- containerd 与 kubelet 服务检查
+- Ansible 调用 kubectl 自动部署 Kubernetes 应用
+
+
+---
+
+| 主机 | IP地址 | 角色 |
+|------|--------|------|
+| k8s-master | 192.168.76.4 | Ansible控制节点 / Kubernetes Master |
+| k8s-node1 | 192.168.76.9 | Kubernetes Worker |
+| k8s-node2 | 192.168.76.19 | Kubernetes Worker |
+
+
+---
+
+# 一、Ansible环境准备
+
+
+## 1. 安装 Ansible
+
+
+控制节点执行：
+
+```bash
+apt update
+
+apt install ansible -y
+```
+
+
+
+查看版本：
+
+```bash
+ansible --version
+```
+
+
+
+---
+
+# 二、SSH免密配置
+
+
+Ansible通过SSH管理远程节点。
+
+
+## 生成密钥
+
+
+```bash
+ssh-keygen
+```
+
+
+
+复制到节点：
+
+```bash
+ssh-copy-id root@192.168.76.9
+
+ssh-copy-id root@192.168.76.19
+```
+
+
+
+测试：
+
+```bash
+ssh node1
+
+ssh node2
+```
+
+
+---
+
+# 三、Inventory配置
+
+
+创建 hosts 文件：
+
+
+```ini
+[kubernetes]
+
+master ansible_host=192.168.76.4
+
+node1 ansible_host=192.168.76.9
+
+node2 ansible_host=192.168.76.19
+
+
+
+[k8s_nodes]
+
+node1
+
+node2
+
+```
+
+
+
+说明：
+
+- kubernetes组管理所有节点
+- k8s_nodes管理Worker节点
+
+
+---
+
+# 四、Ansible连接测试
+
+
+执行：
+
+
+```bash
+ansible all \
+-i hosts \
+-m ping
+```
+
+
+
+成功结果：
+
+
+```
+node1 | SUCCESS
+
+node2 | SUCCESS
+
+```
+
+
+
+表示：
+
+- SSH连接正常
+- Python环境正常
+- Ansible通信正常
+
+
+---
+
+# 五、基础系统巡检
+
+批量查看节点信息
+
+创建：
+
+vim test.yml
+
+内容：
+
+- name: Check system info
+  hosts: kubernetes
+
+  tasks:
+
+  - name: Show hostname
+    command: hostname
+
+  - name: Show kernel
+    command: uname -r
+
+执行：
+
+ansible-playbook -i hosts test.yml
+
+Playbook：系统巡检
+
+创建：
+
+vim playbooks/system-check.yml
+
+内容：
+
+---
+- name: Linux system check
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+
+    - name: Check hostname
+      command: hostname
+      register: hostname_result
+
+    - name: Check kernel version
+      command: uname -r
+      register: kernel_result
+
+    - name: Check disk usage
+      command: df -h
+      register: disk_result
+
+
+    - name: Show hostname
+      debug:
+        msg: "{{ hostname_result.stdout }}"
+
+
+    - name: Show kernel
+      debug:
+        msg: "{{ kernel_result.stdout }}"
+
+执行：
+
+ansible-playbook -i hosts playbooks/system-check.yml
+
+
+Ansible 自动化初始化 Kubernetes 节点
+1. 先创建目录
+
+进入：
+
+cd ~/ansible-lab
+
+创建：
+
+mkdir -p playbooks
+2. 创建 k8s-init.yml
+vim playbooks/k8s-init.yml
+
+写入：
+
+---
+- name: Kubernetes node initialization
+  hosts: k8s_nodes
+  become: yes
+
+  tasks:
+
+    # 关闭swap
+    - name: Disable swap
+      command: swapoff -a
+
+
+    - name: Remove swap from fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '#\1'
+
+
+    # 加载内核模块
+    - name: Load kernel modules
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+
+
+    - name: Load modules immediately
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
+
+
+    # Kubernetes网络参数
+    - name: Configure sysctl for Kubernetes
+      copy:
+        dest: /etc/sysctl.d/k8s.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+
+
+    - name: Apply sysctl
+      command:
+        sysctl --system
+
+
+    # 安装基础工具
+    - name: Install required packages
+      apt:
+        name:
+          - curl
+          - wget
+          - apt-transport-https
+          - ca-certificates
+        state: present
+        update_cache: yes
+
+
+    # 重启containerd
+    - name: Restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+
+    # 检查服务
+    - name: Check kubelet
+      systemd:
+        name: kubelet
+      register: kubelet_status
+
+
+    - name: Show kubelet status
+      debug:
+        msg: "{{ kubelet_status.status.ActiveState }}"
+
+保存。
+
+3. 执行
+
+先检查语法：
+
+ansible-playbook \
+-i hosts \
+playbooks/k8s-init.yml \
+--syntax-check
+
+正常：
+
+playbook: playbooks/k8s-init.yml
+
+执行：
+
+ansible-playbook \
+-i hosts \
+playbooks/k8s-init.yml
+4. 验证节点
+
+执行：
+
+ansible k8s_nodes -i hosts -m shell -a "free -h"
+
+确认 swap：
+
+应该：
+
+Swap: 0B
+
+查看模块：
+
+ansible k8s_nodes -i hosts -m shell -a "lsmod | grep br_netfilter"
+
+查看参数：
+
+ansible k8s_nodes -i hosts -m shell -a "sysctl net.ipv4.ip_forward"
+
+应该：
+
+net.ipv4.ip_forward = 1
+
+
+
+---
+
+问题记录
+
+
+## 问题1：Ansible无法连接Master
+
+
+错误：
+
+```
+Permission denied (publickey,password)
+```
+
+
+
+原因：
+
+Master本身作为Ansible控制节点，不需要SSH连接自己。
+
+
+
+解决：
+
+修改Playbook：
+
+
+```yaml
+hosts: localhost
+
+connection: local
+
+```
+
+
+
+通过本机kubectl管理Kubernetes。
+
+
+
+---
+
+
+## 问题2：Harbor镜像无法拉取
+
+
+错误：
+
+```
+ImagePullBackOff
+
+```
+
+
+
+原因：
+
+Docker和containerd配置独立。
+
+
+Docker配置：
+
+```
+/etc/docker/daemon.json
+```
+
+
+Kubernetes运行时：
+
+```
+containerd
+```
+
+
+需要单独配置containerd私有仓库。
+
+
+
+---
+
+
+## 问题3：containerd访问HTTP Harbor失败
+
+
+错误：
+
+```
+http: server gave HTTP response to HTTPS client
+```
+
+
+
+原因：
+
+
+containerd默认使用HTTPS访问Registry。
+
+
+
+解决：
+
+配置：
+
+```
+/etc/containerd/certs.d/
+```
+
+
+
+添加HTTP Registry配置。
+
+
+
+---
+
