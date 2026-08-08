@@ -1,6 +1,33 @@
 [kubernetes]
-master ansible_host=192.168.76.4
 
-[k8s_nodes]
-node1 ansible_host=192.168.76.9
-node2 ansible_host=192.168.76.19
+k8s-master-1 ansible_host=192.168.76.4
+k8s-master-2 ansible_host=192.168.76.9
+k8s-master-3 ansible_host=192.168.76.19
+
+[keepalived]
+keep-master ansible_host=192.168.76.4
+keep-backup ansible_host=192.168.76.9
+
+[nginx]
+nginx1 ansible_host=192.168.76.4
+
+[mysql_master]
+mysql1 ansible_host=192.168.76.4
+
+[mysql_replica]
+mysql2 ansible_host=192.168.76.6
+
+[postgres_master]
+pg1 ansible_host=192.168.76.4
+
+[postgres_replica]
+pg2 ansible_host=192.168.76.7
+
+[redis_master]
+redis1 ansible_host=192.168.76.4
+
+[redis_replica]
+redis2 ansible_host=192.168.76.6
+
+[redis_sentinel]
+sentinel1 ansible_host=192.168.76.5
