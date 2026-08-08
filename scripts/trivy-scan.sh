@@ -19,3 +19,4 @@ echo "扫描镜像: $IMAGE"
 trivy image --exit-code 0 --format json -o "$REPORT_FILE" "$IMAGE"
 
 echo "扫描完成，报告保存在: $REPORT_FILE"
+
