@@ -224,15 +224,6 @@ kubectl get pods -n kube-system | grep calico
 kubectl get nodes  # 所有节点应显示 Ready
 ```
 
-#### 7️⃣ 部署 Harbor 私有仓库
-参考 [Harbor 部署指南](./Harbor)
-
-#### 8️⃣ 部署 Ingress-Nginx
-参考 [Ingress-Nginx 部署指南](./Kubernetes%20Ingress-Nginx)
-
-#### 9️⃣ 部署监控平台
-参考 [Prometheus + Grafana 部署指南](./Prometheus%20%2B%20Grafana)
-
 ## 📋 常见操作命令
 
 ### 集群验证
@@ -337,59 +328,7 @@ bash scripts/backup-etcd.sh
 
 更多问题详见 [常见问题.md](./常见问题.md)
 
-## 🤝 贡献指南
 
-欢迎提交 Issue 和 Pull Request！
-
-### 报告问题
-- 详细描述问题现象
-- 提供相关错误日志
-- 说明所用的软件版本
-
-### 改进建议
-- 文档优化
-- 新脚本工具
-- 部署经验分享
-
-## 📚 参考资源
-
-### 官方文档
-- [Kubernetes 官方文档](https://kubernetes.io/docs/)
-- [Kubernetes 中文文档](https://kubernetes.io/zh/)
-- [Docker 官方文档](https://docs.docker.com/)
-- [Helm 官方文档](https://helm.sh/docs/)
-
-### 社区资源
-- [kubeadm 安装指南](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/)
-- [containerd 官方文档](https://containerd.io/)
-- [Calico 网络插件](https://docs.tigera.io/calico/latest/about/)
-- [Ingress-Nginx 项目](https://kubernetes.github.io/ingress-nginx/)
-- [Harbor 项目](https://goharbor.io/)
-- [Prometheus 官方文档](https://prometheus.io/docs/)
-- [Grafana 官方文档](https://grafana.com/docs/)
-
-### 学习资源
-- [Kubernetes 中文社区](https://www.kubernetes.org.cn/)
-- [云原生社区](https://cloudnative.to/)
-- [CNCF 官方网站](https://www.cncf.io/)
-
-## 📄 许可证
-
-MIT License - 详见 LICENSE 文件
-
-## 👤 作者
-
-**admin047** - 云原生工程师
-
-## 🎯 项目目标
-
-✅ 学习 Kubernetes 集群搭建原理  
-✅ 掌握企业级容器技术栈  
-✅ 实践 GitOps 和基础设施即代码  
-✅ 建立完整的 DevOps 工程实践  
-✅ 分享云原生技术知识  
-
----
 
 **最后更新**: 2024年8月  
 **Kubernetes 版本**: v1.30.14  
