@@ -1,3 +1,0 @@
-# MOVED: ha
-
-该文件原为 scripts/ha（详细文档/Playbook），已移至 docs/ha.md 保存以避免把文档放在 scripts 运行目录。若需运行 Playbook，请参考 docs/ha.md 中的说明并将需要的 Playbook 拆分到 scripts/ 目录下的单独文件或 roles。
