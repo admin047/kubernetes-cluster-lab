@@ -1,0 +1,37 @@
+---
+- name: Linux system check
+  hosts: kubernetes
+  become: yes
+
+  tasks:
+    - name: Check hostname
+      command: hostname
+      register: hostname_result
+
+    - name: Check kernel version
+      command: uname -r
+      register: kernel_result
+
+    - name: Check disk usage
+      command: df -h
+      register: disk_result
+
+    - name: Check memory
+      command: free -h
+      register: mem_result
+
+    - name: Show hostname
+      debug:
+        msg: "{{ hostname_result.stdout }}"
+
+    - name: Show kernel
+      debug:
+        msg: "{{ kernel_result.stdout }}"
+
+    - name: Show disk usage
+      debug:
+        msg: "{{ disk_result.stdout }}"
+
+    - name: Show memory
+      debug:
+        msg: "{{ mem_result.stdout }}"
