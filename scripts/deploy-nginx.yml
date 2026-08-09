@@ -1,0 +1,22 @@
+---
+- name: Deploy nginx application
+  hosts: localhost
+  connection: local
+  become: yes
+
+  tasks:
+
+    - name: Create namespace
+      command:
+        kubectl create namespace devops
+      ignore_errors: yes
+
+
+    - name: Apply deployment
+      command:
+        kubectl apply -f /root/ansible-lab/manifests/nginx/deployment.yaml
+
+
+    - name: Apply service
+      command:
+        kubectl apply -f /root/ansible-lab/manifests/nginx/service.yaml

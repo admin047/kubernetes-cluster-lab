@@ -1,0 +1,39 @@
+---
+- name: Containerd check
+  hosts: k8s_nodes
+  become: yes
+
+  tasks:
+
+    - name: Check containerd service
+      systemd:
+        name: containerd
+      register: containerd_status
+
+
+    - name: Show containerd status
+      debug:
+        msg: "containerd status: {{ containerd_status.status.ActiveState }}"
+
+
+    - name: Check containerd config
+      stat:
+        path: /etc/containerd/config.toml
+      register: containerd_config
+
+
+    - name: Show config exists
+      debug:
+        msg: "config.toml exists: {{ containerd_config.stat.exists }}"
+
+
+    - name: Check cgroup driver
+      shell: |
+        grep SystemdCgroup /etc/containerd/config.toml
+      register: cgroup_result
+      ignore_errors: yes
+
+
+    - name: Show cgroup driver
+      debug:
+        msg: "{{ cgroup_result.stdout }}"
